@@ -1,35 +1,27 @@
+#define MEMORY_TRACE_MODE
+
+#include "MemoryWatcher.h"
 #include "Vector.h"
 #include <string>
 #include <iostream>
 #include <vector>
 #include <functional>
+#include <cstdlib>
+#include <list>
 
 using namespace std;
 
 #pragma region classes
 
-class ForbiddenCallException : public exception {
-public:
-	ForbiddenCallException () : exception ("forbidden call") { }
-	ForbiddenCallException (const char* msg) : exception(msg) { }
-};
-
 class IntIncapsulator {
 protected:
 	int value;
 public:
-	explicit IntIncapsulator (int val) : value(val) {
-		/*if (DEBUG_MODE) {
-			cerr << "initializing with val = " << value << endl;
-		}*/
-	}
-	~IntIncapsulator () {
-		/*if (DEBUG_MODE) {
-			cerr << "destructing with val = " << value << endl;
-		}*/
-	}
+	explicit IntIncapsulator (int val) : value(val) { }
+	~IntIncapsulator () { }
 
 	inline bool operator== (const IntIncapsulator &obj) const { return value == obj.value; }
+	inline bool operator!= (const IntIncapsulator &obj) const { return !(*this == obj); }
 	inline int getValue () const { return value; }
 };
 
@@ -41,31 +33,21 @@ public:
 		value = another.value;
 		return *this;
 	}
-	TypeWithoutDefCtor (TypeWithoutDefCtor &&another) : IntIncapsulator(move(another.value)) { }
-	TypeWithoutDefCtor& operator= (TypeWithoutDefCtor &&another) {
-		value = move(another.value);
-	}
 };
 
 class TypeUncopiable : public TypeWithoutDefCtor {
 private:
-	explicit TypeUncopiable (const TypeUncopiable &another) : TypeWithoutDefCtor(another.value) {
-		cout << "inside TypeUncopiable(const &)" << endl;
-		throw ForbiddenCallException();
-	}
-	TypeUncopiable& operator= (const TypeUncopiable &another) {
-		cout << "inside TypeUncopiable::operator= (const &)" << endl;
-		throw ForbiddenCallException();
-	}
-	
+    #if defined(_MSC_FULL_VER) && _MSC_FULL_VER < 180000000
+    TypeUncopiable (const TypeUncopiable &another);
+	TypeUncopiable& operator= (const TypeUncopiable &another);
+    #else
+    TypeUncopiable (const TypeUncopiable &another) = delete;
+	TypeUncopiable& operator= (const TypeUncopiable &another) = delete;
+	#endif
 public:
 	TypeUncopiable () : TypeWithoutDefCtor(0) { }
-	TypeUncopiable (int val) : TypeWithoutDefCtor(val) { }	
-
+	TypeUncopiable (int val) : TypeWithoutDefCtor(val) { }
 	TypeUncopiable (TypeUncopiable &&another) : TypeWithoutDefCtor(another) { }
-	TypeUncopiable& operator= (const TypeUncopiable &&another) {
-		TypeWithoutDefCtor::operator=(another);
-	}
 };
 
 #pragma endregion
@@ -81,7 +63,7 @@ void failTest () {
 	throw runtime_error ("Test failed");
 }
 
-//Calls 'action'. If exception of type 'Exception' is thrown, returns. If no - writes a message.
+//Calls 'action'. If exception of type 'Exception' is thrown, silently returns. If no - writes a message.
 template <typename Exception>
 void testException (function<void (void)> action, const char* actionName) {
 	bool caughtSomething = false;
@@ -92,7 +74,7 @@ void testException (function<void (void)> action, const char* actionName) {
 	catch (const Exception &ex) {
 		caughtSomething = true;
 	}
-	catch (const exception &ex) {
+	catch (...) {
 		cout << "Error! Got unexpected exception in action: " << actionName << endl;
 		cout << "Expected exception: " << typeid(Exception).name() << endl;
 		caughtSomething = true;
@@ -122,21 +104,6 @@ bool areEqual (const V1 &a, const V2 &b) {
 	}
 
 	return true;
-}
-
-template <typename T>
-bool operator== (const Vector<T> &v1, const Vector<T> &v2) {
-	return areEqual(v1, v2);
-}
-
-template <typename T>
-bool operator== (const vector<T> &sysVector, const Vector<T> &myVector) {
-	return areEqual(sysVector, myVector);
-}
-
-template <typename T>
-bool operator== (const Vector<T> &myVector, const vector<T> &sysVector) {
-	return areEqual(sysVector, myVector);
 }
 
 ostream& operator<< (ostream &s, const IntIncapsulator &obj) {
@@ -353,6 +320,7 @@ template <typename T>
 void testIteratorConstructor () {
 	cout << endl << ">>>" << "testIteratorConstructor()" << endl;
 
+	//with std::vector
 	vector<T> sysVector;
 
 	fillVector(sysVector, random(0, 20));
@@ -360,8 +328,19 @@ void testIteratorConstructor () {
 	Vector<T> v_copy(sysVector.begin(), sysVector.end());
 
 	if (!areEqual(sysVector, v_copy)) {
-		cout << "error: bad iterator constructor" << endl;
+		cout << "error with std::vector: bad iterator constructor" << endl;
 		cout << "sys. vector: " << sysVector << endl;
+		cout << "copy vector: " << v_copy << endl;
+		failTest();
+	}
+
+	//with std::list
+	std::list<T> sysList (sysVector.begin(), sysVector.end());
+
+	v_copy = Vector<T>(sysList.begin(), sysList.end());
+	if (!areEqual(sysVector, v_copy)) {
+		cout << "error with std::list: bad iterator constructor" << endl;
+		cout << "sys. list: " << sysVector << endl;
 		cout << "copy vector: " << v_copy << endl;
 		failTest();
 	}
@@ -448,17 +427,10 @@ void testSwap () {
 	fillVector(myVector1, sysVector1);
 	fillVector(sysVector2, random(0, 20));
 	fillVector(myVector2, sysVector2);
-
-	Vector<T>::iterator it1 = myVector1.begin();
-	Vector<T>::iterator it2 = myVector2.begin();
-
-	myVector1.swap(myVector2);
 	
-	if (!areEqual (sysVector1, myVector2) || !areEqual (sysVector2, myVector1) ||
-		!(myVector1.size() == 0 || *it2 == myVector1[0]) ||
-		!(sysVector2.size() == 0 || *it2 == sysVector2[0]) ||
-		!(myVector2.size() == 0 || *it1 == myVector2[0]) ||
-		!(sysVector1.size() == 0 || *it1 == sysVector1[0])) {
+	myVector1.swap(myVector2);
+
+	if (!areEqual (sysVector1, myVector2) || !areEqual (sysVector2, myVector1)) {
 		cout << "error: bad swap()" << endl;
 		cout << "sys. vector 1: " << sysVector1 << endl;
 		cout << "sys. vector 2: " << sysVector2 << endl;
@@ -486,7 +458,7 @@ void testReserveAndShrinkToFit () {
 		cout << "src. vector: " << myVector << endl;
 		failTest();
 	}
-	
+
 	myVector.shrink_to_fit();
 
 	//checking for consistency after shrink_to_fit
@@ -552,7 +524,7 @@ void testPopBack () {
 
 	fillVector(sysVector, random(0, 20));
 	fillVector(myVector, sysVector);
-	
+
 	vector<T> sysCopy;
 	fillVector (sysCopy, sysVector);
 
@@ -604,8 +576,8 @@ void testRangedFor () {
 	fillVector(sysVector, random(0, 20));
 	fillVector(myVector, sysVector);
 
-	vector<T>::iterator sysIt = sysVector.begin();
-	vector<T>::iterator sysEnd = sysVector.end();
+	typename vector<T>::iterator sysIt = sysVector.begin();
+	typename vector<T>::iterator sysEnd = sysVector.end();
 
 	for (T& element : myVector) {
 		if (!(element == *sysIt)) {
@@ -618,7 +590,7 @@ void testRangedFor () {
 	}
 
 
-	Vector<Vector<T>::iterator> iterVector;
+	Vector<typename Vector<T>::iterator> iterVector;
 	for (size_t i = 0, sz = myVector.size(); i < sz; ++i) {
 		iterVector.push_back(myVector.begin() + i);
 	}
@@ -642,9 +614,9 @@ void testIteratorValidity () {
 	v.reserve(25);
 	fillVector(v, random(5, 20));
 
-	Vector<T>::iterator it = v.begin();
+    typename Vector<T>::iterator it = v.begin();
 
-	auto checkValidity = [&](char* method_name) {
+	auto checkValidity = [&](const string method_name) {
 		try { *it; }
 		catch (exception &ex) {
 			cout << "Error! Iterator became invalid after calling method \"" << method_name << "\"" << endl;
@@ -669,8 +641,6 @@ void testIteratorValidity () {
 	checkValidity ("pop_back");
 	v.push_back (v2[0]);
 	checkValidity ("push_back");
-	v.swap(v2);
-	checkValidity ("swap");
 }
 
 template <typename T>
@@ -679,39 +649,94 @@ void testIteratorCasts () {
 
 	Vector<T> v;
 
-	(Vector<T>::const_iterator)(v.begin());
-	(Vector<T>::const_reverse_iterator)(v.rbegin());
+	(typename Vector<T>::const_iterator)(v.begin());
+	(typename Vector<T>::const_reverse_iterator)(v.rbegin());
 }
 
 template <typename T>
 void testIteratorTraits () {
 	cout << endl << ">>>" << "testIteratorTraits()" << endl;
 
-	if (typeid(iterator_traits<Vector<T>::iterator>::value_type) != typeid(T)) {
+	if (typeid(typename std::iterator_traits<typename Vector<T>::iterator>::value_type) != typeid(T)) {
 		cout << "cannot determine iterator value type properly" << endl;
-		cout << "iterator_traits::value_type = " << typeid(iterator_traits<Vector<T>::iterator>::value_type).name() << endl;
+		cout << "iterator_traits::value_type = " << typeid(typename std::iterator_traits<typename Vector<T>::iterator>::value_type).name() << endl;
 		cout << "T = " << typeid(T).name() << endl;
 		failTest();
 	}
-	if (typeid(iterator_traits<Vector<T>::iterator>::iterator_category) != typeid(random_access_iterator_tag)) {
-		cout << "iterator_traits::iterator_category = " << typeid(iterator_traits<Vector<T>::iterator>::iterator_category).name() << endl;
+	if (typeid(typename std::iterator_traits<typename Vector<T>::iterator>::iterator_category) != typeid(random_access_iterator_tag)) {
+		cout << "iterator_traits::iterator_category = " << typeid(typename std::iterator_traits<typename Vector<T>::iterator>::iterator_category).name() << endl;
 		failTest();
 	}
-	if (typeid(iterator_traits<Vector<T>::const_iterator>::value_type) != typeid(T)) {
+	if (typeid(typename std::iterator_traits<typename Vector<T>::const_iterator>::value_type) != typeid(T)) {
 		cout << "cannot determine const iterator value type properly" << endl;
-		cout << "iterator_traits::value_type = " << typeid(iterator_traits<Vector<T>::const_iterator>::value_type).name() << endl;
+		cout << "iterator_traits::value_type = " << typeid(typename std::iterator_traits<typename Vector<T>::const_iterator>::value_type).name() << endl;
 		cout << "T = " << typeid(T).name() << endl;
 		failTest();
 	}
-	if (typeid(iterator_traits<Vector<T>::const_iterator>::iterator_category) != typeid(random_access_iterator_tag)) {
-		cout << "iterator_traits::iterator_category = " << typeid(iterator_traits<Vector<T>::const_iterator>::iterator_category).name() << endl;
+	if (typeid(typename std::iterator_traits<typename Vector<T>::const_iterator>::iterator_category) != typeid(random_access_iterator_tag)) {
+		cout << "iterator_traits::iterator_category = " << typeid(typename std::iterator_traits<typename Vector<T>::const_iterator>::iterator_category).name() << endl;
 		failTest();
 	}
 }
 
 template <typename T>
-void testInvalidOperations () {
-	cout << endl << ">>>" << "testInvalidOperations()" << endl;
+void testReverseIterators () {
+	cout << endl << ">>>" << "testReverseIterators()" << endl;
+
+	Vector<T> v;
+
+	fillVector (v, random(5, 20));
+
+	typename Vector<T>::reverse_iterator revIter = v.rbegin(); //end
+	typename Vector<T>::iterator iter = v.end() - 1;
+
+	typename Vector<T>::iterator begin = v.begin();
+
+	while (true) {
+		if (!(*iter == *revIter)) {
+			cout << "Error! Bad reverse_iterator!" << endl;
+			cout << "*revIter = " << *revIter << ", *iter = " << *iter << endl;
+			cout << "vector = " << v << endl;
+			failTest();
+		}
+		if (iter == begin) {
+			break;
+		}
+
+		iter--;
+		revIter++;
+	}
+}
+
+template <typename T>
+void testIteratorUnaryIncrement () {
+	cout << endl << ">>>" << "testIteratorUnaryIncrement()" << endl;
+
+	Vector<T> v1;
+	fillVector (v1, 3);
+
+	Iterator<T> it = v1.begin();
+	T value1 = *(++it);
+
+	if (!(value1 == *(v1.begin() + 1)) || it != v1.begin() + 1) {
+		cout << "Error! bad prefix unary increment operator!" << endl;
+		cout << "value1 = " << value1 << ", *it = " << *it << ", vector = " << v1 << endl;
+		failTest();
+	}
+
+	it = v1.begin();
+	T value0 = *(it++);
+
+	if (!(value0 == *v1.begin()) || it != v1.begin() + 1) {
+		cout << "Error! bad postfix unary increment operator!" << endl;
+		cout << "value0 = " << value0 << ", *it = " << *it << ", vector = " << v1 << endl;
+		failTest();
+	}
+}
+
+template <typename T>
+void testIteratorOperations () {
+	cout << endl << ">>>" << "testIteratorOperations()" << endl;
 
 	Vector<T> v1;
 	fillVector(v1, random(3, 20));
@@ -721,23 +746,29 @@ void testInvalidOperations () {
 	testException<DifferentIteratorDomainException>([&](){ v1.begin() - v2.begin(); }, "v1.begin - v2.begin");
 	testException<DifferentIteratorDomainException>([&](){ v1.begin() >= v2.begin(); }, "v1.begin >= v2.begin");
 
-	testException<InvalidIteratorShiftException>([&](){ v1.begin() - 1000; }, "v1.begin + 1000");
+	testException<InvalidIteratorShiftException>([&](){ v1.begin() + 1000; }, "v1.begin + 1000");
 	testException<InvalidIteratorShiftException>([&](){ v1.begin() - 1; }, "v1.begin - 1");
+	testException<InvalidIteratorShiftException>([&](){ v1.end() + 1; }, "v1.end + 1");
 
+	//won't compile
+	//testException<ExceptionEmulator>([&](){ *v1.cbegin() = *v2.cbegin(); }, "*v1.cbegin = *v2.begin");
+
+	testException<ExceptionEmulator>([&](){ *v1.begin() = *v2.begin(); throw ExceptionEmulator(); }, "*v1.begin = *v2.begin");
+	testException<ExceptionEmulator>([&](){ *v1.begin() = *v2.cbegin(); throw ExceptionEmulator(); }, "*v1.begin = *v2.cbegin");
 	testException<ExceptionEmulator>([&](){ v1.end() - 1; throw ExceptionEmulator(); }, "v1.end() - 1; throw 0");
 	testException<ExceptionEmulator>([&](){ *(v1.begin() + 1); throw ExceptionEmulator(); }, "*(v1.begin + 1); throw 0");
 	testException<ExceptionEmulator>([&](){ Iterator<T> it = v1.begin(); if (*it == *v1.begin()) throw ExceptionEmulator(); else throw "!"; }, "it = v1.begin; *it == *v1.begin?");
 
 	testException<IteratorOutOfRangeException>([&](){ *v1.end();}, "*v1.end");
 
-	Vector<T>::iterator it = v1.begin();
+	typename Vector<T>::iterator it = v1.begin();
 	v1.reserve(100);
 	testException<InvalidIteratorException>([&](){ *it; }, "*it");
 
 	testException<InvalidIteratorException>([&](){ it == v1.begin(); }, "it == v1.begin");
 
 	testException<IndexOutOfRangeException>([&](){ v1[1000]; }, "v1[1000]");
-	
+
 	v1.clear();
 	testException<InvalidOperationException>([&](){ v1.pop_back(); }, "v1.pop_back()");
 }
@@ -746,47 +777,51 @@ void testInvalidOperations () {
 
 template <typename T>
 void test () {
-	testGetAndSet<T>();
-	testCopyConstructor<T>();
-	testMoveConstructor<T>();
-	testIteratorConstructor<T>();
-	testSetOperatorLValue<T>();
-	testSetOperatorRValue<T>();
-	testPopBack<T>();
-	testPushBackLValue<T>();
-	testPushBackRValue<T>();
-	testReserveAndShrinkToFit<T>();
-	testSwap<T>();
-	testClear<T>();
+	//search for leaks is performed after each test unit.
 
-	testIteratorValidity<T>();
-	testRangedFor<T>();
-	testIteratorCasts<T>();
-	testIteratorTraits<T>();
-	testInvalidOperations<T>();
+	testGetAndSet<T>();					watcher.checkTotalConsistency();
+	testCopyConstructor<T>();			watcher.checkTotalConsistency();
+	testMoveConstructor<T>();			watcher.checkTotalConsistency();
+	testIteratorConstructor<T>();		watcher.checkTotalConsistency();
+	testSetOperatorLValue<T>();			watcher.checkTotalConsistency();
+	testSetOperatorRValue<T>();			watcher.checkTotalConsistency();
+	testPopBack<T>();					watcher.checkTotalConsistency();
+	testPushBackLValue<T>();			watcher.checkTotalConsistency();
+	testPushBackRValue<T>();			watcher.checkTotalConsistency();
+	testReserveAndShrinkToFit<T>();		watcher.checkTotalConsistency();
+	testSwap<T>();						watcher.checkTotalConsistency();
+	testClear<T>();						watcher.checkTotalConsistency();
+
+	testIteratorValidity<T>();			watcher.checkTotalConsistency();
+	testRangedFor<T>();					watcher.checkTotalConsistency();
+	testIteratorCasts<T>();				watcher.checkTotalConsistency();
+	testIteratorTraits<T>();			watcher.checkTotalConsistency();
+	testIteratorOperations<T>();		watcher.checkTotalConsistency();
+	testIteratorUnaryIncrement<T>();	watcher.checkTotalConsistency();
+	testReverseIterators<T>();			watcher.checkTotalConsistency();
 }
 
 template <>
 void test<TypeUncopiable> () {
 	typedef TypeUncopiable T;
 
-	testGetAndSet<T>();
-	testMoveConstructor<T>();
-	testSetOperatorRValue<T>();
-	testPopBack<T>();
-	testPushBackRValue<T>();
-	testSwap<T>();
-	testClear<T>();
+	testGetAndSet<T>();					watcher.checkTotalConsistency();
+	testMoveConstructor<T>();			watcher.checkTotalConsistency();
+	testSetOperatorRValue<T>();			watcher.checkTotalConsistency();
+	testPopBack<T>();					watcher.checkTotalConsistency();
+	testPushBackRValue<T>();			watcher.checkTotalConsistency();
+	testSwap<T>();						watcher.checkTotalConsistency();
+	testClear<T>();						watcher.checkTotalConsistency();
 
-	testRangedFor<T>();
-	testIteratorCasts<T>();
-	testIteratorTraits<T>();
-	testInvalidOperations<T>();
+	testRangedFor<T>();					watcher.checkTotalConsistency();
+	testIteratorCasts<T>();				watcher.checkTotalConsistency();
+	testIteratorTraits<T>();			watcher.checkTotalConsistency();
+	testReverseIterators<T>();			watcher.checkTotalConsistency();
 }
 
 int main() {
 
-	for (size_t t = 0; t < 50; ++t) {
+	for (size_t t = 0; t < 100; ++t) {
 		cout << endl << endl << "\t\tTEST " << t << endl << endl;
 
 		cout << endl << "Testing Vector<TypeWithoutDefCtor>" << endl;
@@ -797,7 +832,7 @@ int main() {
 
 		cout << endl << "Testing Vector<Vector<int>>" << endl;
 		test<Vector<int>>();
-	
+
 		cout << endl << "Testing Vector<TypeUncopiable>" << endl;
 		test<TypeUncopiable>();
 

@@ -5,18 +5,20 @@
 #include <memory>
 #include "Iterator.h"
 
-#if defined(_MSC_FULL_VER) && _MSC_FULL_VER < 180021114
+#if defined(_MSC_FULL_VER) && _MSC_FULL_VER < 180000000
 #define noexcept throw()
 #endif
 
-struct IndexOutOfRangeException : public std::exception {
-	IndexOutOfRangeException () : exception () { }
-	explicit IndexOutOfRangeException (const char* const &msg) : exception (msg) { }
+#ifdef MEMORY_TRACE_MODE
+#include "MemoryWatcher.h"
+#endif
+
+struct IndexOutOfRangeException : public std::out_of_range {
+	explicit IndexOutOfRangeException (const char* const &msg) : out_of_range (msg) { }
 };
 
-struct InvalidOperationException : public std::exception {
-	InvalidOperationException () : exception () { }
-	explicit InvalidOperationException (const char* const &msg) : exception (msg) { }
+struct InvalidOperationException : public ExceptionWithMessage {
+	explicit InvalidOperationException (const char* const &msg) : ExceptionWithMessage (msg) { }
 };
 
 template <typename T>
@@ -26,8 +28,17 @@ private:
 	T* memory_end;
 	T* data_end;
 
-	mutable IteratorContainer<Iterator<T>, Vector<T>> *iteratorContainer; //modifiable iterators
-	mutable IteratorContainer<ConstIterator<T>, Vector<T>> *constIteratorContainer; //const iterators
+	IteratorContainer<Iterator<T>, Vector<T>> *iteratorContainer; //modifiable iterators
+	IteratorContainer<ConstIterator<T>, Vector<T>> *constIteratorContainer; //const iterators
+
+	//Safely initializes iteratorContainer and constIteratorContainer
+	void initContainers () {
+		iteratorContainer = new IteratorContainer<iterator, Vector<T>> (this);
+		try {
+			constIteratorContainer = new IteratorContainer<const_iterator, Vector<T>> (this);
+		}
+		catch (...) { delete iteratorContainer; throw; }
+	}
 
 	//for BaseIterator
 	const T *getDataEnd () const {
@@ -50,13 +61,12 @@ private:
 		constIteratorContainer->invalidateAll();
 	}
 
-	template <typename T, typename IteratorImpl, typename V>
+	template <typename T1, typename IteratorImpl, typename V>
 	friend class BaseIterator;
 
 	friend class Iterator<T>;
 
-	template <typename T>
-	friend class ConstIterator;
+	friend class ConstIterator<T>;
 
 	template <typename IteratorImpl, typename V>
 	friend class IteratorContainer;
@@ -87,6 +97,9 @@ public:
 	Vector<T>& operator= (const Vector<T> &other); // copy
 	Vector<T>& operator= (Vector<T> &&other) noexcept; // move
 
+	bool operator== (const Vector<T> &other) const;
+	inline bool operator!= (const Vector<T> &other) const { return !(*this == other); }
+
 	void swap(Vector<T> &other) noexcept; // обмен с другим вектором такого же типа за O(1)
 
 	bool empty() const noexcept { return size() == 0; }
@@ -112,46 +125,47 @@ public:
 
 	//begin/end reverse iterators
 
-	reverse_iterator rbegin() noexcept { return reverse_iterator (begin()); }
-	reverse_iterator rend() noexcept { return reverse_iterator (end()); }
+	reverse_iterator rbegin() noexcept { return reverse_iterator (end()); }
+	reverse_iterator rend() noexcept { return reverse_iterator (begin()); }
 
 	//begin/end const iterators
 
 	const_iterator begin() const noexcept { return cbegin(); }
 	const_iterator end() const noexcept { return cend(); }
 
-	const_iterator cbegin() const noexcept { return const_iterator (memory_begin, &constIteratorContainer); }
-	const_iterator cend() const noexcept { return const_iterator (data_end, &constIteratorContainer); }
+	const_iterator cbegin() const noexcept { return const_iterator (memory_begin, constIteratorContainer); }
+	const_iterator cend() const noexcept { return const_iterator (data_end, constIteratorContainer); }
 
 	//begin/end const reverse iterators
 
 	const_reverse_iterator rbegin() const noexcept { return crbegin(); }
 	const_reverse_iterator rend() const noexcept { return crend(); }
 
-	const_reverse_iterator crbegin() const noexcept { return const_reverse_iterator (cbegin()); }
-	const_reverse_iterator crend() const noexcept { return const_reverse_iterator (cend()); }
+	const_reverse_iterator crbegin() const noexcept { return const_reverse_iterator (cend()); }
+	const_reverse_iterator crend() const noexcept { return const_reverse_iterator (cbegin()); }
 };
 
 template <typename T>
 Vector<T>::Vector () {
-	if (DEBUG_MODE) {
-		cerr << "Vector()" << endl;
-	}
+	#ifdef DEBUG_MODE
+	cerr << "Vector()" << endl;
+	#endif
 
 	memory_begin = data_end = memory_end = nullptr;
+	initContainers();
 
-	iteratorContainer = new IteratorContainer<iterator, Vector<T>> (this);
-	constIteratorContainer = new IteratorContainer<const_iterator, Vector<T>> (this);
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onVectorDefCreated ();
+	#endif
 }
 
 template <typename T>
 Vector<T>::Vector (const Vector<T> &other) {
-	if (DEBUG_MODE) {
-		cerr << "Vector(const &)" << endl;
-	}
+	#ifdef DEBUG_MODE
+	cerr << "Vector(const &)" << endl;
+	#endif
 
-	iteratorContainer = new IteratorContainer<iterator, Vector<T>> (this);
-	constIteratorContainer = new IteratorContainer<const_iterator, Vector<T>> (this);
+	initContainers();
 
 	//no check other == this here: copy constructor is used in shrink_to_fit()
 
@@ -159,15 +173,19 @@ Vector<T>::Vector (const Vector<T> &other) {
 		memory_begin = static_cast<T*>(operator new[] (other.size() * sizeof(T)));
 		memory_end = this->memory_begin + other.size();
 		data_end = this->memory_begin;
+
+		#ifdef MEMORY_TRACE_MODE
+		watcher.onVectorCopyCreated ();
+		watcher.onMemoryAllocated (std::distance (memory_begin, memory_end));
+		#endif
 	}
-	catch (exception &exc) {
-		operator delete[] (memory_begin);
+	catch (...) {
 		memory_begin = data_end = memory_end = nullptr;
 
 		delete iteratorContainer;
 		delete constIteratorContainer;
 
-		throw exc;
+		throw;
 	}
 
 	try {
@@ -175,7 +193,7 @@ Vector<T>::Vector (const Vector<T> &other) {
 			push_back(*j);
 		}
 	}
-	catch (exception &exc) {
+	catch (...) {
 		for (T* i = memory_begin; i < data_end; ++i) {
 			i->~T();
 		}
@@ -185,21 +203,21 @@ Vector<T>::Vector (const Vector<T> &other) {
 		delete iteratorContainer;
 		delete constIteratorContainer;
 
-		throw exc;
+		throw;
 	}
 }
 
 template <typename T>
 Vector<T>::Vector (Vector<T> &&other) noexcept {
-	if (DEBUG_MODE)  {
-		cerr << "Vector(&&)" << endl;
-	}
+	#ifdef DEBUG_MODE
+	cerr << "Vector(&&)" << endl;
+	#endif
 
-	memory_begin = std::move(other.memory_begin);
-	data_end = std::move(other.data_end);
-	memory_end = std::move(other.memory_end);
-	iteratorContainer = std::move(other.iteratorContainer);
-	constIteratorContainer = std::move(other.constIteratorContainer);
+	memory_begin = other.memory_begin;
+	data_end = other.data_end;
+	memory_end = other.memory_end;
+	iteratorContainer = other.iteratorContainer;
+	constIteratorContainer = other.constIteratorContainer;
 
 	other.memory_begin = other.data_end = other.memory_end = nullptr;
 	other.iteratorContainer = nullptr;
@@ -207,43 +225,53 @@ Vector<T>::Vector (Vector<T> &&other) noexcept {
 
 	iteratorContainer->vector = this;
 	constIteratorContainer->vector = this;
+
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onVectorMoveCreated ();
+	#endif
 }
 
 template <typename T>
 template <typename InputIterator>
 Vector<T>::Vector (InputIterator begin, InputIterator end) {
-	if (DEBUG_MODE)  {
-		cerr << "Vector(Iterators)" << endl;
-	}
-
+	#ifdef DEBUG_MODE
+	cerr << "Vector(Iterators)" << endl;
+	#endif
+	
 	memory_begin = data_end = memory_end = nullptr;
-	iteratorContainer = new IteratorContainer<iterator, Vector<T>> (this);
-	constIteratorContainer = new IteratorContainer<const_iterator, Vector<T>> (this);
+	initContainers();
 
-
-	if (typeid(std::iterator_traits<InputIterator>::iterator_category) == typeid(std::random_access_iterator_tag)) {
-		reserve(end - begin);
+	if (typeid(typename std::iterator_traits<InputIterator>::iterator_category) == typeid(std::random_access_iterator_tag)) {
+		reserve(std::distance(begin, end));
 	}
 
-	for (InputIterator i = begin; i < end; ++i) {
+	for (InputIterator i = begin; i != end; ++i) {
 		push_back(*i);
 	}
+
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onVectorIterCreated ();
+	#endif
 }
 
 template <typename T>
 Vector<T>::~Vector () noexcept {
-	if (DEBUG_MODE) {
-		cerr << "~Vector()" << endl;
-	}
+	#ifdef DEBUG_MODE
+	cerr << "~Vector()" << endl;
+	#endif
 
-	if (iteratorContainer != nullptr) {
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onVectorDestroyed ();
+	#endif
+
+	if (iteratorContainer) {
 		iteratorContainer->onVectorDestroy();
 	}
-	if (constIteratorContainer != nullptr) {
+	if (constIteratorContainer) {
 		constIteratorContainer->onVectorDestroy();
 	}
 
-	if (memory_begin == nullptr) {
+	if (!memory_begin) {
 		return;
 	}
 
@@ -251,6 +279,10 @@ Vector<T>::~Vector () noexcept {
 		i->~T();
 	}
 
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onMemoryDeallocated (std::distance (memory_begin, memory_end));
+	#endif
+	
 	operator delete[] (memory_begin);
 }
 
@@ -262,12 +294,7 @@ Vector<T> &Vector<T>::operator= (const Vector<T> &other) {
 }
 
 template <typename T>
-Vector<T> &Vector<T>::operator= (Vector<T> &&other) noexcept {
-	//as adviced at msdn
-	if (*this == other) {
-		return *this;
-	}
-
+Vector<T>& Vector<T>::operator= (Vector<T> &&other) noexcept {
 	Vector<T> temp;
 	temp.swap(other);
 	this->swap(temp);
@@ -276,7 +303,25 @@ Vector<T> &Vector<T>::operator= (Vector<T> &&other) noexcept {
 }
 
 template <typename T>
+bool Vector<T>::operator== (const Vector<T> &other) const {
+	if (size() != other.size()) {
+		return false;
+	}
+
+	for (typename Vector<T>::const_iterator thisIt = cbegin(), otherIt = other.cbegin(), thisEnd = cend(); thisIt < thisEnd; ++thisIt, ++otherIt) {
+		if (!(*thisIt == *otherIt)) { //operator== uses only operator==
+			return false;
+		}
+	}
+
+	return true;
+}
+
+template <typename T>
 void Vector<T>::swap(Vector<T> &other) noexcept { // обмен с другим вектором такого же типа за O(1)
+	this->invalidateIterators();
+	other.invalidateIterators();
+
 	std::swap(memory_begin, other.memory_begin);
 	std::swap(memory_end, other.memory_end);
 	std::swap(data_end, other.data_end);
@@ -339,12 +384,23 @@ void Vector<T>::reserve(size_t new_capacity) {
 	invalidateIterators();
 
 	T* begin = static_cast<T*>(operator new[](sizeof(T) * new_capacity));
+	
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onMemoryAllocated (std::distance (begin, begin + new_capacity)); //uniform memory measure - std::distance
+	#endif
+
 	for (T *i = memory_begin, *j = begin; i < data_end; ++i, ++j) {
 		new(j) T(std::move(*i));
 		i->~T();
 	}
-	
-	operator delete[] (memory_begin);
+
+	if (memory_begin) {
+		#ifdef MEMORY_TRACE_MODE
+		watcher.onMemoryDeallocated (std::distance (memory_begin, memory_end));
+		#endif
+
+		operator delete[] (memory_begin);
+	}
 
 	memory_begin = begin;
 	memory_end = begin + new_capacity;
@@ -354,7 +410,6 @@ void Vector<T>::reserve(size_t new_capacity) {
 template <typename T>
 void Vector<T>::shrink_to_fit() {
 	if (size() < capacity()) {
-		invalidateIterators();
 		Vector<T> temp(*this);
 		this->swap(temp);
 	}
@@ -362,13 +417,12 @@ void Vector<T>::shrink_to_fit() {
 
 template <typename T>
 void Vector<T>::clear() noexcept {
-	invalidateIterators();
 	Vector<T> temp;
 	this->swap(temp);
 }
 
 template <typename T>
-T &Vector<T>::operator[](size_t index) {
+inline T &Vector<T>::operator[](size_t index) {
 	if (index >= size()) {
 		throw IndexOutOfRangeException ("Index out of range");
 	}
@@ -378,6 +432,10 @@ T &Vector<T>::operator[](size_t index) {
 
 template <typename T>
 inline const T &Vector<T>::operator[](size_t index) const {
+	if (index >= size()) {
+		throw IndexOutOfRangeException ("Index out of range");
+	}
+
 	return static_cast<const T&>(*(memory_begin + index));
 }
 

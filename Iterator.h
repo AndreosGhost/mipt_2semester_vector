@@ -1,10 +1,22 @@
 #pragma once
 
-#include "Vector.h"
 #include <iterator>
 #include <stdexcept>
+#include <typeinfo>
+#include <cstddef>
+#include "Vector.h"
 
-#define DEBUG_MODE false
+#ifdef MEMORY_TRACE_MODE
+#include "MemoryWatcher.h"
+#endif
+
+#if defined(_MSC_FULL_VER) && _MSC_FULL_VER < 180000000
+#define noexcept throw()
+#endif
+
+#ifdef DEBUG_MODE
+#include <iostream>
+#endif
 
 template <typename T>
 class Vector;
@@ -14,24 +26,35 @@ class BaseIterator;
 
 #pragma region exceptions
 
-struct InvalidIteratorException : public std::exception {
-	explicit InvalidIteratorException (const char* const &msg) : exception(msg) { }
-	InvalidIteratorException () : exception ("Invalid iterator") { }
+struct ExceptionWithMessage : public std::exception {
+    const char * message;
+
+    explicit ExceptionWithMessage (const char* const &msg) : message(msg) { }
+    ExceptionWithMessage () : message(typeid(*this).name()) { }
+
+    const char* what() const noexcept override {
+        return message;
+    }
 };
 
-struct DifferentIteratorDomainException : public std::exception {
-	explicit DifferentIteratorDomainException (const char* const &msg) : exception(msg) { }
-	DifferentIteratorDomainException () : exception ("Iterators are bound to different vectors") { }
+struct InvalidIteratorException : public ExceptionWithMessage {
+	explicit InvalidIteratorException (const char* const &msg) : ExceptionWithMessage(msg) { }
+	InvalidIteratorException () : ExceptionWithMessage ("Invalid iterator") { }
 };
 
-struct IteratorOutOfRangeException : public std::exception {
-	explicit IteratorOutOfRangeException (const char* const &msg) : exception(msg) { }
-	IteratorOutOfRangeException () : exception ("Iterator ptr out of range") { }
+struct DifferentIteratorDomainException : public ExceptionWithMessage {
+	explicit DifferentIteratorDomainException (const char* const &msg) : ExceptionWithMessage(msg) { }
+	DifferentIteratorDomainException () : ExceptionWithMessage ("Iterators are bound to different vectors") { }
 };
 
-struct InvalidIteratorShiftException : public std::exception {
-	explicit InvalidIteratorShiftException (const char* const &msg) : exception(msg) { }
-	InvalidIteratorShiftException () : exception ("Iterator shift will lead away from range") { }
+struct IteratorOutOfRangeException : public std::out_of_range {
+	explicit IteratorOutOfRangeException (const char* const &msg) : out_of_range(msg) { }
+	IteratorOutOfRangeException () : out_of_range ("Iterator ptr out of range") { }
+};
+
+struct InvalidIteratorShiftException : public std::out_of_range {
+	explicit InvalidIteratorShiftException (const char* const &msg) : out_of_range(msg) { }
+	InvalidIteratorShiftException () : out_of_range ("Iterator shift will lead away from range") { }
 };
 
 #pragma endregion
@@ -44,11 +67,19 @@ struct InvalidIteratorShiftException : public std::exception {
 template <typename IteratorImpl, typename V>
 class IteratorContainer {
 private:
-	IteratorContainer (IteratorContainer<IteratorImpl, V> &) {
-		throw runtime_error ("Uncopiable");
-	}
-protected:
-	template <typename T, typename IteratorImpl, typename V>
+	#if defined(_MSC_FULL_VER) && _MSC_FULL_VER < 180000000
+	IteratorContainer (const IteratorContainer<IteratorImpl, V> &);
+	IteratorContainer<IteratorImpl, V>& operator= (const IteratorContainer<IteratorImpl, V> &);
+	IteratorContainer (IteratorContainer<IteratorImpl, V> &&);
+	IteratorContainer<IteratorImpl, V>& operator= (IteratorContainer<IteratorImpl, V> &&);
+	#else
+	IteratorContainer (IteratorContainer<IteratorImpl, V> &) = delete;
+	IteratorContainer<IteratorImpl, V>& operator= (IteratorContainer<IteratorImpl, V> &) = delete;
+	IteratorContainer (IteratorContainer<IteratorImpl, V> &&) = delete;
+	IteratorContainer<IteratorImpl, V>& operator= (IteratorContainer<IteratorImpl, V> &&) = delete;
+	#endif
+
+	template <typename T, typename IteratorImpl1, typename V1>
 	friend class BaseIterator;
 
 	template <typename T>
@@ -60,22 +91,6 @@ protected:
 	IteratorImpl *headIterator;
 	V *vector;
 
-public:
-	IteratorContainer (V *host) {
-		headIterator = nullptr;
-		vector = host;
-		if (DEBUG_MODE) {
-			cout << "IteratorContainer<" << typeid(IteratorImpl).name() << ">(V*)" << endl;
-		}
-	}
-
-	~IteratorContainer () {
-		if (DEBUG_MODE) {
-			cout << "~IteratorContainer<" << typeid(IteratorImpl).name() << ">()" << endl;
-		}
-	}
-
-protected:
 	void addIterator (IteratorImpl *iter);
 	void invalidateAll ();
 
@@ -83,22 +98,46 @@ protected:
 	void onVectorDestroy ();
 
 	//is vector already destroyed
-	bool isVectorDestroyed () { return vector == nullptr; }
+	bool isVectorDestroyed () { return !vector; }
+
+public:
+	explicit IteratorContainer (V *host) {
+		headIterator = nullptr;
+		vector = host;
+
+		#ifdef DEBUG_MODE
+		cout << "IteratorContainer<" << typeid(IteratorImpl).name() << ">(V*)" << endl;
+		#endif
+
+		#ifdef MEMORY_TRACE_MODE
+		watcher.onContainerHostCreated ();
+		#endif
+	}
+
+	~IteratorContainer () {
+		#ifdef DEBUG_MODE
+		cout << "~IteratorContainer<" << typeid(IteratorImpl).name() << ">()" << endl;
+		#endif
+
+		#ifdef MEMORY_TRACE_MODE
+		watcher.onContainerDestroyed();
+		#endif
+	}
 };
 
 //Base class for const and non-const iterator.
 //When created within a real vector, registers itself at IteratorContainer.
 template <typename T, typename IteratorImpl, typename V>
-class BaseIterator : std::iterator<std::random_access_iterator_tag, T> {
+class BaseIterator : public std::iterator<std::random_access_iterator_tag, T> {
 protected:
 	T *ptr; //ptr inside the vector
 	IteratorContainer<IteratorImpl, V> *container; //all iterators of this type bound to the same vector
 	IteratorImpl *next; //next iterator in double-linked list (also in container)
 	IteratorImpl *prev; //prev iterator in double-linked list (also in container)
+
 	bool valid;
 
-	template <typename IteratorImpl, typename V>
-	friend class IteratorContainer;
+	friend class IteratorContainer<IteratorImpl, V>;
 
 	BaseIterator (T *ptr, IteratorContainer<IteratorImpl, V> *container);
 
@@ -109,16 +148,17 @@ protected:
 	const IteratorImpl* that () const {
 		return static_cast<const IteratorImpl*>(this);
 	}
-	
+
 	//check if our ptr is valid
-	void checkValidity () const throw (InvalidIteratorException) {
+	void checkValidity () const {
 		if (!valid) {
 			throw InvalidIteratorException();
 		}
 	}
 
 	//check if this and another are bound to the same vector
-	void checkDomainEquality (const BaseIterator<T, IteratorImpl, V> &another) const throw (DifferentIteratorDomainException) {
+	//Attention: this->container and another->container must exist!
+	void checkDomainEquality (const BaseIterator<T, IteratorImpl, V> &another) const {
 		if (container->vector != another.container->vector) {
 			throw DifferentIteratorDomainException();
 		}
@@ -127,10 +167,12 @@ protected:
 public:
 	BaseIterator ();
 	BaseIterator (const BaseIterator<T, IteratorImpl, V> &iter);
-	
+	BaseIterator (BaseIterator<T, IteratorImpl, V> &&iter) noexcept;
+
 	~BaseIterator ();
 
-	IteratorImpl &operator= (const BaseIterator<T, IteratorImpl, V> &iter);
+	IteratorImpl& operator= (const BaseIterator<T, IteratorImpl, V> &iter);
+	IteratorImpl& operator= (BaseIterator<T, IteratorImpl, V> &&iter);
 
 	template <typename IteratorImpl2>
 	bool operator== (const BaseIterator<T, IteratorImpl2, V> &iter) const;
@@ -138,19 +180,17 @@ public:
 	template <typename IteratorImpl2>
 	bool operator!= (const BaseIterator<T, IteratorImpl2, V> &iter) const;
 
-	const T& operator* () const;
-	const T* operator-> () const;
+	T& operator* () const;
+	T* operator-> () const;
 
-	T& operator* ();
+	IteratorImpl& operator++ ();
+	IteratorImpl operator++ (int);
 
-	IteratorImpl operator++ ();
-	IteratorImpl& operator++ (int);
+	IteratorImpl& operator-- ();
+	IteratorImpl operator-- (int);
 
-	IteratorImpl operator-- ();
-	IteratorImpl& operator-- (int);
-
-	IteratorImpl operator+ (int offset) const;
-	IteratorImpl operator- (int offset) const;
+	IteratorImpl operator+ (ptrdiff_t offset) const;
+	IteratorImpl operator- (ptrdiff_t offset) const;
 
 	ptrdiff_t operator- (const BaseIterator<T, IteratorImpl, V> &another) const;
 
@@ -159,11 +199,10 @@ public:
 	bool operator> (const BaseIterator<T, IteratorImpl, V> &another) const;
 	bool operator>= (const BaseIterator<T, IteratorImpl, V> &another) const;
 
-	IteratorImpl& operator+= (int offset);
-	IteratorImpl& operator-= (int offset);
+	IteratorImpl& operator+= (ptrdiff_t offset);
+	IteratorImpl& operator-= (ptrdiff_t offset);
 
-	T& operator[] (int offset) const;
-	void swap (BaseIterator<T, IteratorImpl, V> &another);
+	T& operator[] (ptrdiff_t offset) const;
 };
 
 #pragma region IteratorContainer implementation
@@ -172,7 +211,7 @@ template <typename IteratorImpl, typename V>
 void IteratorContainer<IteratorImpl, V>::onVectorDestroy () {
 	vector = nullptr;
 	invalidateAll();
-	if (headIterator == nullptr) {
+	if (!headIterator) {
 		delete this;
 	}
 }
@@ -180,9 +219,9 @@ void IteratorContainer<IteratorImpl, V>::onVectorDestroy () {
 template <typename IteratorImpl, typename V>
 void IteratorContainer<IteratorImpl, V>::invalidateAll () {
 	//as soon as newer iterators are in the head...
-	
+
 	IteratorImpl *it = headIterator;
-	while (it != nullptr && it->valid) {
+	while (it && it->valid) {
 		it->valid = false;
 		it = it->next;
 	}
@@ -191,13 +230,13 @@ void IteratorContainer<IteratorImpl, V>::invalidateAll () {
 template <typename IteratorImpl, typename V>
 void IteratorContainer<IteratorImpl, V>::addIterator (IteratorImpl *iter) {
 	//iter becomes the head
-	
-	if (headIterator == nullptr) {
+
+	if (!headIterator) { //no chain presenter
 		headIterator = iter;
 		iter->next = nullptr;
 		iter->prev = nullptr;
 	}
-	else {
+	else { //replace existing chain presenter
 		iter->prev = nullptr;
 		iter->next = headIterator;
 		headIterator->prev = iter;
@@ -211,61 +250,130 @@ void IteratorContainer<IteratorImpl, V>::addIterator (IteratorImpl *iter) {
 
 template <typename T, typename IteratorImpl, typename V>
 BaseIterator<T, IteratorImpl, V>::BaseIterator (T* ptr, IteratorContainer<IteratorImpl, V>* container) {
-	if (DEBUG_MODE) {
-		cout << typeid(*that()).name() << "(T*, Container*)" << endl;
-	}
+	#ifdef DEBUG_MODE
+	cout << typeid(*that()).name() << "(T*, Container*)" << endl;
+	#endif
 
+	prev = next = nullptr;
 	this->ptr = ptr;
 	this->container = container;
 	this->container->addIterator (that());
-	
+
 	valid = true;
+
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onBaseIteratorPtrCreated();
+	#endif
 }
 
 template <typename T, typename IteratorImpl, typename V>
 BaseIterator<T, IteratorImpl, V>::BaseIterator () {
-	if (DEBUG_MODE) {
-		cout << typeid(*that()).name() << "()" << endl;
-	}
+	#ifdef DEBUG_MODE
+	cout << typeid(*that()).name() << "()" << endl;
+	#endif
+
+	prev = next = nullptr;
+	ptr = nullptr;
+	container = nullptr;
 
 	valid = false;
+
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onBaseIteratorDefCreated();
+	#endif
 }
 
 template <typename T, typename IteratorImpl, typename V>
 BaseIterator<T, IteratorImpl, V>::BaseIterator (const BaseIterator<T, IteratorImpl, V> &iter) {
-	if (DEBUG_MODE) {
-		cout << typeid(*that()).name() << "(const &)" << endl;
-	}
-	
+	#ifdef DEBUG_MODE
+	cout << typeid(*that()).name() << "(const &)" << endl;
+	#endif
+
+	prev = next = nullptr;
 	ptr = iter.ptr;
 	container = iter.container;
-	container->addIterator(that());
-	valid = true;
+	if (container) {
+		container->addIterator(that());
+	}
+
+	valid = iter.valid;
+
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onBaseIteratorCopyCreated();
+	#endif
+}
+
+template <typename T, typename IteratorImpl, typename V>
+BaseIterator<T, IteratorImpl, V>::BaseIterator (BaseIterator<T, IteratorImpl, V> &&iter) noexcept {
+	*this = std::move(iter);
+
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onBaseIteratorMoveCreated();
+	#endif
 }
 
 template <typename T, typename IteratorImpl, typename V>
 BaseIterator<T, IteratorImpl, V>::~BaseIterator () {
-	if (DEBUG_MODE) {
-		cout << "~" << typeid(*that()).name() << "()" << endl;
+	#ifdef DEBUG_MODE
+	cout << "~" << typeid(*that()).name() << "()" << endl;
+	#endif
+
+	//fixing neighbours' links
+	if (prev) {
+		prev->next = next;
+	}
+	if (next) {
+		next->prev = prev;
 	}
 
-	if (prev != nullptr) {
-		prev->next = this->next;
-	}
-	if (next != nullptr) {
-		next->prev = this->prev;
-	}
-	if (prev == nullptr) {
+	//fixing chain presenter link
+	if (!prev && container) {
 		container->headIterator = next;
 	}
-	if (container->isVectorDestroyed() && container->headIterator == nullptr) {
+
+	//killing container if vector is dead and no iterators left.
+	if (container && container->isVectorDestroyed() && !container->headIterator) {
 		delete container;
 	}
+
+	#ifdef MEMORY_TRACE_MODE
+	watcher.onBaseIteratorDestroyed();
+	#endif
 }
 
 template <typename T, typename IteratorImpl, typename V>
 inline IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator= (const BaseIterator<T, IteratorImpl, V> &iter) {
-	swap(IteratorImpl(iter));
+	BaseIterator<T, IteratorImpl, V> temp(iter);
+	std::swap (*this, temp);
+	return *that();
+}
+
+template <typename T, typename IteratorImpl, typename V>
+IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator= (BaseIterator<T, IteratorImpl, V> &&iter) {
+	ptr = iter.ptr;
+	container = iter.container;
+	next = iter.next;
+	prev = iter.prev;
+	valid = iter.valid;
+
+	//fixing links
+	if (prev) {
+		prev->next = that();
+	}
+	if (next) {
+		next->prev = that();
+	}
+
+	//fixing chain presenter
+	if (container && !prev) {
+		container->headIterator = that();
+	}
+
+	iter.ptr = nullptr;
+	iter.container = nullptr;
+	iter.next = iter.prev = nullptr;
+	iter.valid = false;
+
 	return *that();
 }
 
@@ -274,7 +382,7 @@ template <typename IteratorImpl2>
 bool BaseIterator<T, IteratorImpl, V>::operator== (const BaseIterator<T, IteratorImpl2, V> &iter) const {
 	checkValidity();
 	iter.checkValidity();
-	this->checkDomainEquality(iter);
+	checkDomainEquality(iter);
 
 	return ptr == iter.ptr;
 }
@@ -286,31 +394,12 @@ inline bool BaseIterator<T, IteratorImpl, V>::operator!= (const BaseIterator<T, 
 }
 
 template <typename T, typename IteratorImpl, typename V>
-const T& BaseIterator<T, IteratorImpl, V>::operator* () const {
-	checkValidity();
-
-	if (ptr < container->vector->getDataEnd()) {
-		return static_cast<const T&>(*ptr);
-	}
-	else {
-		throw IteratorOutOfRangeException();
-	}
+T& BaseIterator<T, IteratorImpl, V>::operator* () const {
+	return (*this)[0];
 }
 
 template <typename T, typename IteratorImpl, typename V>
-T& BaseIterator<T, IteratorImpl, V>::operator* () {
-	checkValidity();
-
-	if (ptr < container->vector->getDataEnd()) {
-		return *ptr;
-	}
-	else {
-		throw IteratorOutOfRangeException();
-	}
-}
-
-template <typename T, typename IteratorImpl, typename V>
-const T* BaseIterator<T, IteratorImpl, V>::operator-> () const {
+T* BaseIterator<T, IteratorImpl, V>::operator-> () const {
 	checkValidity();
 
 	if (ptr < container->vector->getDataEnd()) {
@@ -322,16 +411,7 @@ const T* BaseIterator<T, IteratorImpl, V>::operator-> () const {
 }
 
 template <typename T, typename IteratorImpl, typename V>
-IteratorImpl BaseIterator<T, IteratorImpl, V>::operator++ () {
-	IteratorImpl clone(*that());
-	
-	this->operator++(1);
-
-	return clone;
-}
-
-template <typename T, typename IteratorImpl, typename V>
-IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator++ (int) {
+IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator++ () {
 	checkValidity();
 	if (ptr < container->vector->getDataEnd()) {
 		++ptr;
@@ -343,18 +423,18 @@ IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator++ (int) {
 }
 
 template <typename T, typename IteratorImpl, typename V>
-IteratorImpl BaseIterator<T, IteratorImpl, V>::operator-- () {
+IteratorImpl BaseIterator<T, IteratorImpl, V>::operator++ (int) {
 	IteratorImpl clone(*that());
-	
-	this->operator--(1);
+
+	++*this;
 
 	return clone;
 }
 
 template <typename T, typename IteratorImpl, typename V>
-IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator-- (int) {
+IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator-- () {
 	checkValidity();
-	if (ptr > container->vector.getDataBegin()) {
+	if (ptr > container->vector->getDataBegin()) {
 		--ptr;
 		return *that();
 	}
@@ -364,20 +444,29 @@ IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator-- (int) {
 }
 
 template <typename T, typename IteratorImpl, typename V>
-inline IteratorImpl BaseIterator<T, IteratorImpl, V>::operator+ (int offset) const {
+IteratorImpl BaseIterator<T, IteratorImpl, V>::operator-- (int) {
+	IteratorImpl clone(*that());
+
+	--*this;
+
+	return clone;
+}
+
+template <typename T, typename IteratorImpl, typename V>
+inline IteratorImpl BaseIterator<T, IteratorImpl, V>::operator+ (ptrdiff_t offset) const {
 	IteratorImpl iter(*that());
 	iter += offset;
 	return iter;
 }
 
 template <typename T, typename IteratorImpl, typename V>
-inline IteratorImpl operator+ (int offset, const BaseIterator<T, IteratorImpl, V> &iter) {
-	return iter.operator+ (offset);
+inline IteratorImpl operator+ (ptrdiff_t offset, const BaseIterator<T, IteratorImpl, V> &iter) {
+	return iter + offset;
 }
 
 template <typename T, typename IteratorImpl, typename V>
-inline IteratorImpl BaseIterator<T, IteratorImpl, V>::operator- (int offset) const {
-	return operator+ (-offset);
+inline IteratorImpl BaseIterator<T, IteratorImpl, V>::operator- (ptrdiff_t offset) const {
+	return *this + (-offset);
 }
 
 template <typename T, typename IteratorImpl, typename V>
@@ -400,7 +489,7 @@ bool BaseIterator<T, IteratorImpl, V>::operator< (const BaseIterator<T, Iterator
 
 template <typename T, typename IteratorImpl, typename V>
 inline bool BaseIterator<T, IteratorImpl, V>::operator<= (const BaseIterator<T, IteratorImpl, V> &another) const {
-	return *that() == another || *that() < another;
+	return !(another < *that());
 }
 
 template <typename T, typename IteratorImpl, typename V>
@@ -410,11 +499,11 @@ inline bool BaseIterator<T, IteratorImpl, V>::operator> (const BaseIterator<T, I
 
 template <typename T, typename IteratorImpl, typename V>
 inline bool BaseIterator<T, IteratorImpl, V>::operator>= (const BaseIterator<T, IteratorImpl, V> &another) const {
-	return another == *that() || another < *that();
+	return !(*that() < another);
 }
 
 template <typename T, typename IteratorImpl, typename V>
-IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator+= (int offset) {
+IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator+= (ptrdiff_t offset) {
 	checkValidity();
 	if (offset >= 0 ? ((container->vector->getDataEnd() - ptr) >= offset)
 					: ((ptr - container->vector->getDataBegin()) >= -offset)) {
@@ -427,18 +516,26 @@ IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator+= (int offset) {
 }
 
 template <typename T, typename IteratorImpl, typename V>
-inline IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator-= (int offset) {
-	return operator+= (-offset);
+inline IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator-= (ptrdiff_t offset) {
+	return *this += (-offset);
 }
 
 template <typename T, typename IteratorImpl, typename V>
-inline T& BaseIterator<T, IteratorImpl, V>::operator[] (int offset) const {
-	return *(that() + offset);
-}
+inline T& BaseIterator<T, IteratorImpl, V>::operator[] (ptrdiff_t offset) const {
+	checkValidity();
 
-template <typename T, typename IteratorImpl, typename V>
-inline void BaseIterator<T, IteratorImpl, V>::swap (BaseIterator<T, IteratorImpl, V> &another) {
-	std::swap(*that(), another);
+	if (offset >= 0 ? ((container->vector->getDataEnd() - ptr) > offset)
+					: ((ptr - container->vector->getDataBegin()) >= -offset)) {
+		return *(ptr + offset);
+	}
+	else {
+		if ((container->vector->getDataEnd() - ptr) == offset) { //iterator pointers to the end
+			throw IteratorOutOfRangeException();
+		}
+		else { //shifting by given offset leads away from range
+			throw InvalidIteratorShiftException();
+		}
+	}
 }
 
 #pragma endregion
@@ -450,17 +547,15 @@ class Iterator;
 
 template <typename T>
 class ConstIterator : public BaseIterator<const T, ConstIterator<T>, Vector<T>> {
-protected:
 	friend class Vector<T>;
 	friend class Iterator<T>;
-	
-	
+
 public:
 	ConstIterator (T* ptr, IteratorContainer<ConstIterator<T>, Vector<T>> *container)
 		: BaseIterator<const T, ConstIterator<T>, Vector<T>>(ptr, container) { }
 
 	ConstIterator () { }
-	ConstIterator (BaseIterator<T, ConstIterator, Vector<T>> &iter) : BaseIterator(iter) { }
+	ConstIterator (const BaseIterator<const T, ConstIterator, Vector<T>> &iter) : BaseIterator<const T, ConstIterator<T>, Vector<T>>(iter) { }
 };
 
 template <typename T>
@@ -469,12 +564,13 @@ protected:
 	friend class ConstIterator<T>;
 	friend class Vector<T>;
 
-	Iterator (T *ptr, IteratorContainer<Iterator<T>, Vector<T>> *container) : BaseIterator (ptr, container) { }
+	Iterator (T *ptr, IteratorContainer<Iterator<T>, Vector<T>> *container) : BaseIterator<T, Iterator<T>, Vector<T>> (ptr, container) { }
 public:
 	Iterator () { }
-	Iterator (const BaseIterator<T, Iterator, Vector<T>> &iter) : BaseIterator(iter) { }
+	Iterator (const BaseIterator<T, Iterator, Vector<T>> &iter) : BaseIterator<T, Iterator<T>, Vector<T>>(iter) { }
 
 	operator ConstIterator<T> () const {
-		return ConstIterator<T>(ptr, container->vector->getConstIteratorContainer());
+		this->checkValidity();
+		return ConstIterator<T>(this->ptr, this->container->vector->getConstIteratorContainer());
 	}
 };

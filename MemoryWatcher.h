@@ -8,11 +8,11 @@
 #endif
 
 struct MemoryLeakException : public std::exception {
-	const char * message;
+	const char* message;
 
-	explicit MemoryLeakException (const char * const &msg) : message (msg) { }
+	explicit MemoryLeakException (const char* msg) : message (msg) { }
 
-	const char * what () const noexcept override {
+	const char* what () const noexcept override {
 		return message;
 	}
 };
@@ -20,47 +20,47 @@ struct MemoryLeakException : public std::exception {
 //This class is tracking memory leaks
 class MemoryWatcher {
 private:
-	size_t vectorsDefCreated;  //created with default constructor
-	size_t vectorsCopyCreated; //created with 'copy' constructor
-	size_t vectorsMoveCreated; //created with 'move' constructor
-	size_t vectorsIterCreated; //created with 'iterator' constructor
-	size_t vectorsDestroyed;   //destroyed
+	int vectorsDefCreated;  //created with default constructor
+	int vectorsCopyCreated; //created with 'copy' constructor
+	int vectorsMoveCreated; //created with 'move' constructor
+	int vectorsIterCreated; //created with 'iterator' constructor
+	int vectorsDestroyed;   //destroyed
 
 	ptrdiff_t memoryAllocated;	//allocated memory. Measured with std::distance
 	ptrdiff_t memoryDeallocated; //deallocated memory. Measured the same way.
 
-	size_t baseIteratorsPtrCreated; //created with private 'pointer' constructor
-	size_t baseIteratorsDefCreated;
-	size_t baseIteratorsCopyCreated;
-	size_t baseIteratorsMoveCreated;
-	size_t baseIteratorsDestroyed;
+	int baseIteratorsPtrCreated; //created with private 'pointer' constructor
+	int baseIteratorsDefCreated;
+	int baseIteratorsCopyCreated;
+	int baseIteratorsMoveCreated;
+	int baseIteratorsDestroyed;
 
-	size_t containersHostCreated;	//host vector is given as a parameter to this constructor
-	size_t containersDestroyed;
+	int containersHostCreated;	//host vector is given as a parameter to this constructor
+	int containersDestroyed;
 
 public:
-	size_t getVectorsDefCreated () const noexcept { return vectorsDefCreated; }
-	size_t getVectorsCopyCreated () const noexcept { return vectorsCopyCreated; }
-	size_t getVectorsMoveCreated () const noexcept { return vectorsMoveCreated; }
-	size_t getVectorsIterCreated () const noexcept { return vectorsIterCreated; }
-	size_t getVectorsDestroyed () const noexcept { return vectorsDestroyed; }
+	int getVectorsDefCreated () const noexcept { return vectorsDefCreated; }
+	int getVectorsCopyCreated () const noexcept { return vectorsCopyCreated; }
+	int getVectorsMoveCreated () const noexcept { return vectorsMoveCreated; }
+	int getVectorsIterCreated () const noexcept { return vectorsIterCreated; }
+	int getVectorsDestroyed () const noexcept { return vectorsDestroyed; }
 
-	size_t getMemoryAllocated () const noexcept { return memoryAllocated; }
-	size_t getMemoryDeallocated () const noexcept { return memoryDeallocated; }
+	int getMemoryAllocated () const noexcept { return memoryAllocated; }
+	int getMemoryDeallocated () const noexcept { return memoryDeallocated; }
 
-	size_t getBaseIteratorsDefCreated () const noexcept { return baseIteratorsDefCreated; }
-	size_t getBaseIteratorsCopyCreated () const noexcept { return baseIteratorsCopyCreated; }
-	size_t getBaseIteratorsMoveCreated () const noexcept { return baseIteratorsMoveCreated; }
-	size_t getBaseIteratorsPtrCreated () const noexcept { return baseIteratorsPtrCreated; }
-	size_t getBaseIteratorsDestroyed () const noexcept { return baseIteratorsDestroyed; }
+	int getBaseIteratorsDefCreated () const noexcept { return baseIteratorsDefCreated; }
+	int getBaseIteratorsCopyCreated () const noexcept { return baseIteratorsCopyCreated; }
+	int getBaseIteratorsMoveCreated () const noexcept { return baseIteratorsMoveCreated; }
+	int getBaseIteratorsPtrCreated () const noexcept { return baseIteratorsPtrCreated; }
+	int getBaseIteratorsDestroyed () const noexcept { return baseIteratorsDestroyed; }
 
-	size_t getContainersHostCreated () const noexcept { return containersHostCreated; }
-	size_t getContainersDestroyed () const noexcept { return containersDestroyed; }
+	int getContainersHostCreated () const noexcept { return containersHostCreated; }
+	int getContainersDestroyed () const noexcept { return containersDestroyed; }
 
-	int vectorsAlive () const noexcept { return (int)vectorsDefCreated + vectorsCopyCreated + vectorsMoveCreated + vectorsIterCreated - vectorsDestroyed; }
-	int memoryAlive () const noexcept { return (int)memoryAllocated - memoryDeallocated; }
-	int iteratorsAlive () const noexcept { return (int)baseIteratorsDefCreated + baseIteratorsCopyCreated + baseIteratorsMoveCreated + baseIteratorsPtrCreated - baseIteratorsDestroyed; }
-	int containersAlive () const noexcept { return (int)containersHostCreated - containersDestroyed; }
+	int vectorsAlive () const noexcept { return vectorsDefCreated + vectorsCopyCreated + vectorsMoveCreated + vectorsIterCreated - vectorsDestroyed; }
+	int memoryAlive () const noexcept { return memoryAllocated - memoryDeallocated; }
+	int iteratorsAlive () const noexcept { return baseIteratorsDefCreated + baseIteratorsCopyCreated + baseIteratorsMoveCreated + baseIteratorsPtrCreated - baseIteratorsDestroyed; }
+	int containersAlive () const noexcept { return containersHostCreated - containersDestroyed; }
 
 	void checkVectorCreationConsistency () const {
 		if (vectorsAlive() != 0) {

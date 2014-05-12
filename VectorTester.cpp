@@ -1,4 +1,5 @@
 #define MEMORY_TRACE_MODE
+//#define DEBUG_MODE
 
 #include "MemoryWatcher.h"
 #include "Vector.h"
@@ -20,9 +21,9 @@ public:
 	explicit IntIncapsulator (int val) : value(val) { }
 	~IntIncapsulator () { }
 
-	inline bool operator== (const IntIncapsulator &obj) const { return value == obj.value; }
-	inline bool operator!= (const IntIncapsulator &obj) const { return !(*this == obj); }
-	inline int getValue () const { return value; }
+	bool operator== (const IntIncapsulator &obj) const { return value == obj.value; }
+	bool operator!= (const IntIncapsulator &obj) const { return !(*this == obj); }
+	int getValue () const { return value; }
 };
 
 class TypeWithoutDefCtor : public IntIncapsulator {
@@ -46,8 +47,12 @@ private:
 	#endif
 public:
 	TypeUncopiable () : TypeWithoutDefCtor(0) { }
-	TypeUncopiable (int val) : TypeWithoutDefCtor(val) { }
+	explicit TypeUncopiable (int val) : TypeWithoutDefCtor(val) { }
 	TypeUncopiable (TypeUncopiable &&another) : TypeWithoutDefCtor(another) { }
+	TypeUncopiable& operator= (TypeUncopiable &&another) {
+		value = another.value;
+		return *this;
+	}
 };
 
 #pragma endregion
@@ -71,7 +76,7 @@ void testException (function<void (void)> action, const char* actionName) {
 	try {
 		action();
 	}
-	catch (const Exception &ex) {
+	catch (const Exception&) {
 		caughtSomething = true;
 	}
 	catch (...) {
@@ -337,11 +342,11 @@ void testIteratorConstructor () {
 	//with std::list
 	std::list<T> sysList (sysVector.begin(), sysVector.end());
 
-	v_copy = Vector<T>(sysList.begin(), sysList.end());
-	if (!areEqual(sysVector, v_copy)) {
+	Vector<T> v_copy2 (sysList.begin(), sysList.end());
+	if (!areEqual(sysVector, v_copy2)) {
 		cout << "error with std::list: bad iterator constructor" << endl;
 		cout << "sys. list: " << sysVector << endl;
-		cout << "copy vector: " << v_copy << endl;
+		cout << "copy vector: " << v_copy2 << endl;
 		failTest();
 	}
 }
@@ -427,7 +432,7 @@ void testSwap () {
 	fillVector(myVector1, sysVector1);
 	fillVector(sysVector2, random(0, 20));
 	fillVector(myVector2, sysVector2);
-	
+
 	myVector1.swap(myVector2);
 
 	if (!areEqual (sysVector1, myVector2) || !areEqual (sysVector2, myVector1)) {
@@ -657,6 +662,13 @@ template <typename T>
 void testIteratorTraits () {
 	cout << endl << ">>>" << "testIteratorTraits()" << endl;
 
+	testException<ExceptionEmulator> ([&](){
+		Vector<T> v;
+		fillVector(v, random(1, 5));
+		typename std::iterator_traits<typename Vector<T>::iterator>::value_type value = std::move(*v.begin());
+		throw ExceptionEmulator();
+	}, "std::iterator_traits<typename Vector<T>::iterator>::value_type value = *iter");
+
 	if (typeid(typename std::iterator_traits<typename Vector<T>::iterator>::value_type) != typeid(T)) {
 		cout << "cannot determine iterator value type properly" << endl;
 		cout << "iterator_traits::value_type = " << typeid(typename std::iterator_traits<typename Vector<T>::iterator>::value_type).name() << endl;
@@ -751,7 +763,7 @@ void testIteratorOperations () {
 	testException<InvalidIteratorShiftException>([&](){ v1.end() + 1; }, "v1.end + 1");
 
 	//won't compile
-	//testException<ExceptionEmulator>([&](){ *v1.cbegin() = *v2.cbegin(); }, "*v1.cbegin = *v2.begin");
+	//testException<ExceptionEmulator>([&](){ *v1.cbegin() = *v2.begin(); }, "*v1.cbegin = *v2.begin");
 
 	testException<ExceptionEmulator>([&](){ *v1.begin() = *v2.begin(); throw ExceptionEmulator(); }, "*v1.begin = *v2.begin");
 	testException<ExceptionEmulator>([&](){ *v1.begin() = *v2.cbegin(); throw ExceptionEmulator(); }, "*v1.begin = *v2.cbegin");
@@ -820,7 +832,6 @@ void test<TypeUncopiable> () {
 }
 
 int main() {
-
 	for (size_t t = 0; t < 100; ++t) {
 		cout << endl << endl << "\t\tTEST " << t << endl << endl;
 

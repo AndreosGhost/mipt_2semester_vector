@@ -658,6 +658,18 @@ void testIteratorCasts () {
 	v.begin() == v.cbegin();
 	v.rbegin() == v.crbegin();
 	v.crbegin() == v.rbegin();
+	v.cbegin() >= v.begin();
+	v.begin() > v.cbegin();
+
+	v.begin() - v.cbegin();
+	v.cbegin() - v.begin();
+
+	typename Vector<T>::const_iterator it = v.begin();
+	typename Vector<T>::iterator it2 = v.begin();
+
+	it = v.begin();
+	it = v.cbegin();
+	it = it2;
 
 	(typename Vector<T>::const_iterator)(v.begin());
 	(typename Vector<T>::const_reverse_iterator)(v.rbegin());
@@ -755,6 +767,9 @@ template <typename T>
 void testIteratorOperations () {
 	cout << endl << ">>>" << "testIteratorOperations()" << endl;
 
+	vector<T> sys;
+	fillVector (sys, 5);
+	
 	Vector<T> v1;
 	fillVector(v1, random(3, 20));
 	Vector<T> v2;

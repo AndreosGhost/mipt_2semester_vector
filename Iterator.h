@@ -207,12 +207,20 @@ public:
 	IteratorImpl operator+ (ptrdiff_t offset) const;
 	IteratorImpl operator- (ptrdiff_t offset) const;
 
-	ptrdiff_t operator- (const BaseIterator<T, IteratorImpl, V> &another) const;
+	template <typename T2, typename IteratorImpl2>
+	ptrdiff_t operator- (const BaseIterator<T2, IteratorImpl2, V> &another) const;
 
-	bool operator< (const BaseIterator<T, IteratorImpl, V> &another) const;
-	bool operator<= (const BaseIterator<T, IteratorImpl, V> &another) const;
-	bool operator> (const BaseIterator<T, IteratorImpl, V> &another) const;
-	bool operator>= (const BaseIterator<T, IteratorImpl, V> &another) const;
+	template <typename T2, typename IteratorImpl2>
+	bool operator< (const BaseIterator<T2, IteratorImpl2, V> &another) const;
+
+	template <typename T2, typename IteratorImpl2>
+	bool operator<= (const BaseIterator<T2, IteratorImpl2, V> &another) const;
+
+	template <typename T2, typename IteratorImpl2>
+	bool operator> (const BaseIterator<T2, IteratorImpl2, V> &another) const;
+
+	template <typename T2, typename IteratorImpl2>
+	bool operator>= (const BaseIterator<T2, IteratorImpl2, V> &another) const;
 
 	IteratorImpl& operator+= (ptrdiff_t offset);
 	IteratorImpl& operator-= (ptrdiff_t offset);
@@ -312,11 +320,6 @@ BaseIterator<T, IteratorImpl, V>::~BaseIterator () {
 
 	selfRemoveFromContainer();
 
-	//killing container if vector is dead and no iterators left.
-	if (container && container->isVectorDestroyed() && !container->headIterator) {
-		delete container;
-	}
-
 	#ifdef MEMORY_TRACE_MODE
 	watcher.onBaseIteratorDestroyed();
 	#endif
@@ -336,6 +339,14 @@ void BaseIterator<T, IteratorImpl, V>::selfRemoveFromContainer () {
 	if (!prev && container) {
 		container->headIterator = next;
 	}
+
+	prev = next = nullptr;
+
+	//killing container if vector is dead and no iterators left.
+	if (container && container->isVectorDestroyed() && !container->headIterator) {
+		delete container;
+	}
+	container = nullptr;
 }
 
 template <typename T, typename IteratorImpl, typename V>
@@ -350,9 +361,6 @@ inline IteratorImpl& BaseIterator<T, IteratorImpl, V>::operator= (const BaseIter
 		container = iter.container;
 		if (container) {
 			container->addIterator(that());
-		}
-		else {
-			prev = next = nullptr;
 		}
 	}
 
@@ -447,7 +455,8 @@ inline IteratorImpl BaseIterator<T, IteratorImpl, V>::operator- (ptrdiff_t offse
 }
 
 template <typename T, typename IteratorImpl, typename V>
-ptrdiff_t BaseIterator<T, IteratorImpl, V>::operator- (const BaseIterator<T, IteratorImpl, V> &another) const {
+template <typename T2, typename IteratorImpl2>
+ptrdiff_t BaseIterator<T, IteratorImpl, V>::operator- (const BaseIterator<T2, IteratorImpl2, V> &another) const {
 	checkValidity();
 	another.checkValidity();
 	checkDomainEquality (another);
@@ -456,7 +465,8 @@ ptrdiff_t BaseIterator<T, IteratorImpl, V>::operator- (const BaseIterator<T, Ite
 }
 
 template <typename T, typename IteratorImpl, typename V>
-bool BaseIterator<T, IteratorImpl, V>::operator< (const BaseIterator<T, IteratorImpl, V> &another) const {
+template <typename T2, typename IteratorImpl2>
+bool BaseIterator<T, IteratorImpl, V>::operator< (const BaseIterator<T2, IteratorImpl2, V> &another) const {
 	checkValidity();
 	another.checkValidity();
 	checkDomainEquality (another);
@@ -465,17 +475,20 @@ bool BaseIterator<T, IteratorImpl, V>::operator< (const BaseIterator<T, Iterator
 }
 
 template <typename T, typename IteratorImpl, typename V>
-inline bool BaseIterator<T, IteratorImpl, V>::operator<= (const BaseIterator<T, IteratorImpl, V> &another) const {
+template <typename T2, typename IteratorImpl2>
+inline bool BaseIterator<T, IteratorImpl, V>::operator<= (const BaseIterator<T2, IteratorImpl2, V> &another) const {
 	return !(another < *that());
 }
 
 template <typename T, typename IteratorImpl, typename V>
-inline bool BaseIterator<T, IteratorImpl, V>::operator> (const BaseIterator<T, IteratorImpl, V> &another) const {
+template <typename T2, typename IteratorImpl2>
+inline bool BaseIterator<T, IteratorImpl, V>::operator> (const BaseIterator<T2, IteratorImpl2, V> &another) const {
 	return another < *that();
 }
 
 template <typename T, typename IteratorImpl, typename V>
-inline bool BaseIterator<T, IteratorImpl, V>::operator>= (const BaseIterator<T, IteratorImpl, V> &another) const {
+template <typename T2, typename IteratorImpl2>
+inline bool BaseIterator<T, IteratorImpl, V>::operator>= (const BaseIterator<T2, IteratorImpl2, V> &another) const {
 	return !(*that() < another);
 }
 

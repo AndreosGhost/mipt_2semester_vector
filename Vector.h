@@ -220,16 +220,16 @@ Vector<T>::Vector (const Vector<T> &other) {
 			for (T* i = memory_begin; i < data_end; ++i) {
 				i->~T();
 			}
+			#ifdef MEMORY_TRACE_MODE
+			watcher.onMemoryDeallocated (std::distance(memory_begin, memory_end));
+			#endif
+
+			operator delete[] (memory_begin);
+
 			throw;
 		}
 	}
 	catch (...) {
-		#ifdef MEMORY_TRACE_MODE
-		watcher.onMemoryDeallocated (std::distance(memory_begin, memory_end));
-		#endif
-
-		operator delete[] (memory_begin);
-
 		delete iteratorContainer;
 		delete constIteratorContainer;
 

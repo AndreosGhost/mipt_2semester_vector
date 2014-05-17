@@ -653,6 +653,11 @@ void testIteratorCasts () {
 	cout << endl << ">>>" << "testIteratorCasts()" << endl;
 
 	Vector<T> v;
+	
+	v.cbegin() == v.begin();
+	v.begin() == v.cbegin();
+	v.rbegin() == v.crbegin();
+	v.crbegin() == v.rbegin();
 
 	(typename Vector<T>::const_iterator)(v.begin());
 	(typename Vector<T>::const_reverse_iterator)(v.rbegin());
@@ -770,6 +775,7 @@ void testIteratorOperations () {
 	testException<ExceptionEmulator>([&](){ v1.end() - 1; throw ExceptionEmulator(); }, "v1.end() - 1; throw 0");
 	testException<ExceptionEmulator>([&](){ *(v1.begin() + 1); throw ExceptionEmulator(); }, "*(v1.begin + 1); throw 0");
 	testException<ExceptionEmulator>([&](){ Iterator<T> it = v1.begin(); if (*it == *v1.begin()) throw ExceptionEmulator(); else throw "!"; }, "it = v1.begin; *it == *v1.begin?");
+	testException<ExceptionEmulator>([&](){ if (1 + v1.begin() == v1.begin() + 1) throw ExceptionEmulator(); else throw "!"; }, "1 + v1.begin == v1.begin + 1");
 
 	testException<IteratorOutOfRangeException>([&](){ *v1.end();}, "*v1.end");
 
